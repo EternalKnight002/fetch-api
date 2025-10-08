@@ -6,31 +6,36 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"time"
 )
 
-// fetchUsersFromServer fetches data from an external API
+// fetchUsersFromServer fetches data from an external API and returns raw JSON-decoded value.
 func fetchUsersFromServer() ([]map[string]interface{}, error) {
-	// Example public API (you can replace this with your own)
 	url := "https://jsonplaceholder.typicode.com/users"
 
-	resp, err := http.Get(url)
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	resp, err := client.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch users: %v", err)
+		return nil, fmt.Errorf("failed to GET external URL %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("server returned status: %v", resp.Status)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("external server returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %v", err)
+		return nil, fmt.Errorf("failed to read external response body: %w", err)
 	}
 
 	var users []map[string]interface{}
 	if err := json.Unmarshal(body, &users); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON: %v", err)
+		return nil, fmt.Errorf("failed to parse JSON from external server: %w", err)
 	}
 
 	return users, nil
@@ -45,15 +50,19 @@ func handleUsers(w http.ResponseWriter, r *http.Request) {
 
 	users, err := fetchUsersFromServer()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// Log detailed error on server console and return a short message to client
+		log.Printf("ERROR fetching users: %v\n", err)
+		http.Error(w, "Failed to fetch users from upstream", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(users)
+	// encode response
+	if err := json.NewEncoder(w).Encode(users); err != nil {
+		log.Printf("ERROR encoding users to response: %v\n", err)
+	}
 }
 
-// Root endpoint
 func homeHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Welcome to Fetch API Server 🌍")
 }
@@ -62,6 +71,7 @@ func main() {
 	http.HandleFunc("/", homeHandler)
 	http.HandleFunc("/users", handleUsers)
 
-	fmt.Println("✅ Server running at http://localhost:8083")
-	log.Fatal(http.ListenAndServe(":8083", nil))
+	addr := ":8083" // matches the port you opened in the browser
+	fmt.Printf("✅ Server running at http://localhost%s\n", addr)
+	log.Fatal(http.ListenAndServe(addr, nil))
 }
